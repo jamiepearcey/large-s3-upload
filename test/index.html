@@ -68,13 +68,11 @@
     <script type="module">
         import { FileUploader } from '/client/upload-client.js';
 
-        // Helper function to update progress
         function updateProgress(percent) {
             const progressBar = document.getElementById('progressBar');
             progressBar.style.width = `${percent}%`;
         }
 
-        // Helper function to update status
         function updateStatus(message) {
             const status = document.getElementById('status');
             status.textContent = message;
@@ -90,10 +88,9 @@
 
             const file = fileInput.files[0];
             
-            // Get configuration from inputs using camelCase
             const config = {
                 apiKey: document.getElementById('apiKey').value,
-                baseUrl: document.getElementById('baseUrl').value.replace(/\/+$/, ''),  // Remove trailing slashes
+                baseUrl: document.getElementById('baseUrl').value.replace(/\/+$/, ''),
                 chunkSize: parseInt(document.getElementById('chunkSize').value),
             };
 
@@ -103,7 +100,6 @@
                 updateStatus('Starting upload...');
                 updateProgress(0);
 
-                // Add progress callback using camelCase
                 const result = await uploader.uploadFile(file, {
                     onProgress: (uploadedBytes, totalBytes) => {
                         const percent = Math.round((uploadedBytes / totalBytes) * 100);
@@ -112,11 +108,21 @@
                     },
                     onChunkComplete: (chunkNumber, totalChunks) => {
                         updateStatus(`Uploaded chunk ${chunkNumber} of ${totalChunks}`);
+                    },
+                    onFileComplete: (fileInfo) => {
+                        console.log('File upload completed:', fileInfo);
+                        updateStatus(`Upload complete! 
+                            Id: ${fileInfo.fileId}
+                            File: ${fileInfo.originalName}
+                            Size: ${(fileInfo.size / 1024 / 1024).toFixed(2)} MB
+                            Type: ${fileInfo.mimeType}
+                            Location: ${fileInfo.location}
+                        `);
                     }
                 });
 
                 updateProgress(100);
-                updateStatus(`Upload complete! File ID: ${result.fileId}`);
+
             } catch (error) {
                 updateProgress(0);
                 updateStatus(`Upload failed: ${error.message}`);

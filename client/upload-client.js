@@ -73,12 +73,22 @@ class FileUploader {
                 })
             });
 
-            return {
+            const result = {
                 fileId,
                 location: completeResponse.location,
                 key: completeResponse.key,
-                fileExtension
+                fileExtension,
+                originalName: file.name,
+                size: file.size,
+                mimeType: file.type
             };
+
+            // Call onFileComplete callback with the complete file information
+            if (callbacks.onFileComplete) {
+                callbacks.onFileComplete(result);
+            }
+
+            return result;
 
         } catch (error) {
             console.error('Upload error:', error);
