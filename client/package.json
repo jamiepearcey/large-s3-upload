@@ -1,0 +1,12 @@
+{
+  "name": "large-s3-upload-client",
+  "version": "1.0.0",
+  "description": "Client library for large S3 upload service",
+  "main": "upload-client.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["upload", "s3", "chunk", "client"],
+  "author": "",
+  "license": "MIT"
+} 

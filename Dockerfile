@@ -1,22 +1,24 @@
-FROM node:18-slim
+FROM node:20-alpine
 
-# Set the working directory
-WORKDIR /usr/src/app
+WORKDIR /app
 
-# Copy package.json and package-lock.json
 COPY package*.json ./
+RUN npm install
 
-# Install dependencies
-RUN npm install --no-cache
-
-# Copy the application code
 COPY . .
 
-# Create the uploads directory
-RUN mkdir -p uploads
+ENV NODE_ENV=production
 
-# Expose port 8000
-EXPOSE 8000
+# These will be overridden by Docker environment variables
+ENV PORT=3000
+ENV API_KEY=change-this-in-production
+ENV USE_S3=true
+ENV S3_BUCKET=prod-bucket
+ENV AWS_REGION=eu-west-1
+ENV AWS_ACCESS_KEY_ID=prod-access-key
+ENV AWS_SECRET_ACCESS_KEY=prod-secret-key
+ENV S3_ENDPOINT=http://minio:9000
 
-# Start the application
-CMD ["npm", "start"]
+EXPOSE $PORT
+
+CMD ["npm", "run", "start:prod"]
