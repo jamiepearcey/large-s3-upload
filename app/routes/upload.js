@@ -2,6 +2,8 @@ import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMult
 import express from 'express';
 import multer from 'multer';
 import config from '../../config/config.js';
+import { createGunzip } from 'zlib';
+import { Readable } from 'stream';
 
 const router = express.Router();
 
@@ -42,22 +44,17 @@ const validateS3Config = (req, res, next) => {
 // Add the validation middleware to all routes
 router.post('/upload_chunk', validateS3Config, upload.single('chunk'), async (req, res) => {
     try {
-        // Log the received data for debugging
-        console.log('Received form data:', {
-            body: req.body,
-            file: req.file ? {
-                fieldname: req.file.fieldname,
-                size: req.file.size,
-                mimetype: req.file.mimetype
-            } : null
-        });
-
-        // Get data from FormData fields using camelCase
-        const fileId = req.body.fileId;
-        const chunkNumber = req.body.chunkNumber;
-        const uploadId = req.body.uploadId;
-        const fileExtension = req.body.fileExtension;  // Get fileExtension from form data
+        const { 
+            fileId, 
+            chunkNumber, 
+            uploadId, 
+            fileExtension,
+            compressed,
+            originalSize 
+        } = req.body;
+        
         const file = req.file;
+        const isCompressed = compressed === 'true';
 
         if (!file || !uploadId || !chunkNumber || !fileId) {
             return res.status(400).json({ 
@@ -67,51 +64,63 @@ router.post('/upload_chunk', validateS3Config, upload.single('chunk'), async (re
                     fileId,
                     chunkNumber,
                     uploadId,
-                    fileExtension,
-                    bodyFields: Object.keys(req.body)
+                    compressed: isCompressed
                 }
             });
         }
 
-        // Ensure chunkNumber is a valid number and greater than 0
-        const partNumber = parseInt(chunkNumber);
-        if (isNaN(partNumber) || partNumber < 1) {
-            return res.status(400).json({ 
-                error: 'Invalid chunk number', 
-                received: chunkNumber 
-            });
-        }
-
-        // Create key with file extension
         const key = fileExtension ? `${fileId}.${fileExtension}` : fileId;
+        let uploadBuffer = file.buffer;
 
-        console.log('Uploading chunk:', {
-            fileId,
-            partNumber,
-            uploadId,
-            fileExtension,
-            key,
-            chunkSize: file.size
-        });
+        // Decompress if the chunk was compressed
+        if (isCompressed) {
+            try {
+                const gunzip = createGunzip();
+                const chunks = [];
+                
+                const readable = Readable.from(file.buffer);
+                readable.pipe(gunzip);
+
+                for await (const chunk of gunzip) {
+                    chunks.push(chunk);
+                }
+
+                uploadBuffer = Buffer.concat(chunks);
+                
+                console.log('Decompression stats:', {
+                    originalSize: parseInt(originalSize),
+                    compressedSize: file.size,
+                    decompressedSize: uploadBuffer.length,
+                    compressionRatio: (file.size / parseInt(originalSize)).toFixed(2)
+                });
+                
+            } catch (error) {
+                console.error('Decompression error:', error);
+                return res.status(400).json({ 
+                    error: 'Failed to decompress chunk',
+                    details: error.message 
+                });
+            }
+        }
 
         const uploadPartResponse = await s3Client.send(new UploadPartCommand({
             Bucket: config.S3.bucket,
-            Key: key,  // Use the key with extension
-            PartNumber: partNumber,
+            Key: key,
+            PartNumber: parseInt(chunkNumber),
             UploadId: uploadId,
-            Body: file.buffer,
-            ContentLength: file.size
+            Body: uploadBuffer,
+            ContentLength: uploadBuffer.length
         }));
 
         console.log('Upload part response:', {
             ETag: uploadPartResponse.ETag,
-            PartNumber: partNumber,
+            PartNumber: parseInt(chunkNumber),
             Key: key
         });
 
         res.json({
             eTag: uploadPartResponse.ETag,
-            partNumber: partNumber
+            partNumber: parseInt(chunkNumber)
         });
 
     } catch (error) {
@@ -124,6 +133,8 @@ router.post('/upload_chunk', validateS3Config, upload.single('chunk'), async (re
                 chunkNumber: req.body.chunkNumber,
                 uploadId: req.body.uploadId,
                 fileExtension: req.body.fileExtension,
+                compressed: req.body.compressed,
+                originalSize: req.body.originalSize,
                 hasFile: !!req.file
             }
         });

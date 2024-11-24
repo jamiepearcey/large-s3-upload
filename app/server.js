@@ -2,10 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { S3Client } from '@aws-sdk/client-s3';
-import multer from 'multer';
-import { Upload } from '@aws-sdk/lib-storage';
-import dotenv from 'dotenv';
 import uploadRoutes from './routes/upload.js';
 import config from '../config/config.js';
 

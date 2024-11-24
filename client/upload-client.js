@@ -5,6 +5,41 @@ class FileUploader {
         this.chunkSize = config.chunkSize || 1024 * 1024; // Default 1MB
         this.apiKey = config.apiKey;
         this.maxParallelUploads = config.maxParallelUploads || 3; // Default parallel uploads
+        this.useCompression = config.useCompression !== false; // Enable by default
+    }
+
+    // Helper function to compress data
+    async compressChunk(chunk) {
+        // Convert Blob to ArrayBuffer first
+        const arrayBuffer = await chunk.arrayBuffer();
+        
+        const compressedStream = new CompressionStream('gzip');
+        const writer = compressedStream.writable.getWriter();
+        
+        // Write the ArrayBuffer
+        writer.write(new Uint8Array(arrayBuffer));
+        writer.close();
+
+        const chunks = [];
+        const reader = compressedStream.readable.getReader();
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+        }
+
+        // Concatenate all chunks into a single Uint8Array
+        const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+        const concatenated = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+            concatenated.set(chunk, offset);
+            offset += chunk.length;
+        }
+
+        // Return as Blob for FormData
+        return new Blob([concatenated]);
     }
 
     async uploadFile(file, callbacks = {}) {
@@ -12,10 +47,25 @@ class FileUploader {
         const totalChunks = Math.ceil(file.size / this.chunkSize);
         const fileExtension = file.name.split('.').pop();
 
+        // Initialize timing stats
+        const stats = {
+            startTime: Date.now(),
+            endTime: null,
+            totalTime: null,
+            uploadSpeed: null,
+            compressionRatio: null,
+            totalCompressedSize: 0,
+            originalSize: file.size
+        };
+
         try {
             const startResponse = await this._sendRequest('/start_upload', {
                 method: 'POST',
-                body: JSON.stringify({ fileId, fileExtension })
+                body: JSON.stringify({ 
+                    fileId, 
+                    fileExtension,
+                    compressed: this.useCompression 
+                })
             });
 
             const { uploadId } = startResponse;
@@ -41,13 +91,25 @@ class FileUploader {
             const processChunk = async (task) => {
                 const { chunkNumber, start, end } = task;
                 const chunk = file.slice(start, end);
+                
+                // Compress the chunk if compression is enabled
+                const processedChunk = this.useCompression ? 
+                    await this.compressChunk(chunk) : 
+                    chunk;
+
+                // Track compressed size for compression ratio calculation
+                if (this.useCompression) {
+                    stats.totalCompressedSize += processedChunk.size;
+                }
 
                 const formData = new FormData();
-                formData.append('chunk', chunk);
+                formData.append('chunk', processedChunk);
                 formData.append('fileId', fileId);
                 formData.append('uploadId', uploadId);
                 formData.append('fileExtension', fileExtension);
                 formData.append('chunkNumber', chunkNumber);
+                formData.append('compressed', this.useCompression.toString());
+                formData.append('originalSize', chunk.size.toString());
 
                 try {
                     const response = await this._sendRequest('/upload_chunk', {
@@ -106,6 +168,15 @@ class FileUploader {
                 })
             });
 
+            // Calculate final statistics
+            stats.endTime = Date.now();
+            stats.totalTime = (stats.endTime - stats.startTime) / 1000; // Convert to seconds
+            stats.uploadSpeed = (file.size / (1024 * 1024)) / stats.totalTime; // MB/s
+
+            if (this.useCompression) {
+                stats.compressionRatio = stats.totalCompressedSize / file.size;
+            }
+
             const result = {
                 fileId,
                 location: completeResponse.location,
@@ -113,7 +184,21 @@ class FileUploader {
                 fileExtension,
                 originalName: file.name,
                 size: file.size,
-                mimeType: file.type
+                mimeType: file.type,
+                stats: {
+                    totalTimeSeconds: stats.totalTime.toFixed(2),
+                    uploadSpeedMBps: stats.uploadSpeed.toFixed(2),
+                    compressionRatio: stats.compressionRatio ? 
+                        stats.compressionRatio.toFixed(2) : 
+                        'compression disabled',
+                    originalSizeMB: (file.size / (1024 * 1024)).toFixed(2),
+                    compressedSizeMB: this.useCompression ? 
+                        (stats.totalCompressedSize / (1024 * 1024)).toFixed(2) : 
+                        'compression disabled',
+                    totalChunks,
+                    chunkSizeMB: (this.chunkSize / (1024 * 1024)).toFixed(2),
+                    parallelUploads: this.maxParallelUploads
+                }
             };
 
             if (callbacks.onFileComplete) {
