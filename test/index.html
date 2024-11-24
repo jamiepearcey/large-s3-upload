@@ -36,15 +36,34 @@
             margin-top: 10px;
             color: #666;
         }
+        .token-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #f0f7ff;
+            border-radius: 5px;
+        }
+        .token-status {
+            margin-top: 10px;
+            color: #666;
+        }
+        .error {
+            color: #ff0000;
+        }
     </style>
 </head>
 <body>
-    <div class="config-section">
-        <h3>Configuration</h3>
+    <div class="token-section">
+        <h3>Authentication</h3>
         <div>
             <label for="apiKey">API Key:</label>
-            <input type="text" id="apiKey" value="default-dev-key" style="width: 300px;">
+            <input type="text" id="apiKey" value="" style="width: 300px;">
         </div>
+        <button id="getTokenButton">Get Upload Token</button>
+        <div class="token-status" id="tokenStatus"></div>
+    </div>
+
+    <div class="config-section">
+        <h3>Configuration</h3>
         <div>
             <label for="baseUrl">Base URL:</label>
             <input type="text" id="baseUrl" value="http://localhost:3000/api" style="width: 300px;">
@@ -65,8 +84,8 @@
 
     <div class="upload-section">
         <h3>File Upload</h3>
-        <input type="file" id="fileInput">
-        <button onclick="uploadFile()">Upload</button>
+        <input type="file" id="fileInput" disabled>
+        <button onclick="uploadFile()" disabled id="uploadButton">Upload</button>
         <div class="progress">
             <div class="progress-bar" id="progressBar"></div>
         </div>
@@ -74,7 +93,35 @@
     </div>
 
     <script type="module">
-        import { FileUploader } from '/client/upload-client.js';
+        import { FileUploader, getUploadToken } from '/client/upload-client.js';
+        
+        let tokenInfo = null;
+
+        async function getToken() {
+            const apiKey = document.getElementById('apiKey').value;
+            const baseUrl = document.getElementById('baseUrl').value
+            const tokenStatus = document.getElementById('tokenStatus');
+            const fileInput = document.getElementById('fileInput');
+            const uploadButton = document.getElementById('uploadButton');
+
+            try {
+                tokenStatus.textContent = 'Retrieving token...';
+                tokenStatus.classList.remove('error');
+
+                tokenInfo = await getUploadToken(baseUrl, apiKey);
+
+                tokenStatus.textContent = 'Token retrieved successfully!';
+                fileInput.disabled = false;
+                uploadButton.disabled = false;
+
+            } catch (error) {
+                console.error('Token error:', error);
+                tokenStatus.textContent = `Failed to get token: ${error.message}`;
+                tokenStatus.classList.add('error');
+                fileInput.disabled = true;
+                uploadButton.disabled = true;
+            }
+        };
 
         function updateProgress(percent) {
             const progressBar = document.getElementById('progressBar');
@@ -87,6 +134,13 @@
         }
 
         window.uploadFile = async function() {
+            const baseUrl = document.getElementById('baseUrl').value
+
+            if (!tokenInfo) {
+                updateStatus('Please get an upload token first');
+                return;
+            }
+
             const fileInput = document.getElementById('fileInput');
             
             if (!fileInput.files.length) {
@@ -96,19 +150,20 @@
 
             const file = fileInput.files[0];
             
-            const config = {
-                apiKey: document.getElementById('apiKey').value,
-                baseUrl: document.getElementById('baseUrl').value.replace(/\/+$/, ''),
-                chunkSize: parseInt(document.getElementById('chunkSize').value),
-                maxParallelUploads: 5,
-                compressionMode: document.getElementById('compressionMode').value
-            };
-
-            const uploader = new FileUploader(config);
-            
             try {
                 updateStatus('Starting upload...');
                 updateProgress(0);
+
+
+                const uploader = new FileUploader({
+                    baseUrl,
+                    token: tokenInfo.token,
+                    tokenExpiry: tokenInfo.expiryTime,
+                    chunkSize: parseInt(document.getElementById('chunkSize').value),
+                    maxParallelUploads: 5,
+                    compressionMode: document.getElementById('compressionMode').value
+                });
+
 
                 const result = await uploader.uploadFile(file, {
                     onProgress: (uploadedBytes, totalBytes) => {
@@ -122,11 +177,12 @@
                     onFileComplete: (fileInfo) => {
                         console.log('File upload completed:', fileInfo);
                         updateStatus(`Upload complete! 
-                            Id: ${fileInfo.fileId}
                             File: ${fileInfo.originalName}
-                            Size: ${(fileInfo.size / 1024 / 1024).toFixed(2)} MB
+                            Size: ${fileInfo.stats.originalSizeMB} MB
                             Type: ${fileInfo.mimeType}
-                            Location: ${fileInfo.location}
+                            Upload Time: ${fileInfo.stats.totalTimeSeconds}s
+                            Speed: ${fileInfo.stats.uploadSpeedMBps} MB/s
+                            Compression: ${fileInfo.stats.compressionRatio}
                         `);
                     }
                 });
@@ -139,12 +195,16 @@
             }
         };
 
-        // Event listener for file upload using camelCase
+        // Event listener for file upload
         document.getElementById("fileInput").addEventListener("change", (event) => {
             const file = event.target.files[0];
             if (file) {
-                uploadFile();  // Don't pass file, it's already in the input
+                uploadFile();
             }
+        });
+        // Event listener for file upload
+        document.getElementById("getTokenButton").addEventListener("click", (event) => {
+            getToken();
         });
     </script>
 </body>

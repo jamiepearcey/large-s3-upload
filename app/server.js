@@ -3,6 +3,7 @@ import cors from 'cors';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import uploadRoutes from './routes/upload.js';
+import authRoutes from './routes/auth.js';
 import config from '../config/config.js';
 
 const app = express();
@@ -12,15 +13,14 @@ if (config.DISABLE_CORS) {
     app.use(cors({
         origin: '*',
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'X-Api-Key']
+        allowedHeaders: ['Content-Type', 'X-Api-Key', 'Authorization']
     }));
     console.log('CORS disabled - allowing all origins');
 } else {
-    // Add your production CORS configuration here
     app.use(cors({
         origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [],
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'X-Api-Key']
+        allowedHeaders: ['Content-Type', 'X-Api-Key', 'Authorization']
     }));
     console.log('CORS enabled with configured origins');
 }
@@ -41,8 +41,12 @@ if (process.env.NODE_ENV !== 'production') {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Add auth routes BEFORE upload routes
+app.use('/api/auth', authRoutes);
 app.use('/api', uploadRoutes);
 
 app.listen(config.PORT, () => {
     console.log(`Server running on port ${config.PORT}`);
+    console.log('Environment:', process.env.NODE_ENV || 'development');
+    console.log('Auth endpoint:', '/api/auth/token');
 });

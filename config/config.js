@@ -24,7 +24,9 @@ const config = {
         bucket: process.env.S3_BUCKET,
         endpoint: process.env.S3_ENDPOINT,
         forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true'
-    }
+    },
+    JWT_SECRET: process.env.JWT_SECRET || 'your-development-secret',
+    JWT_EXPIRY: process.env.JWT_EXPIRY || '1h'
 };
 
 export default config; 

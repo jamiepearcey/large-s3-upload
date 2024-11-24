@@ -1,13 +1,63 @@
-class FileUploader {
+// Separate token generation function
+export async function getUploadToken(baseUrl, apiKey) {
+    const response = await fetch(`${baseUrl}/auth/token`, {
+        method: 'POST',
+        headers: {
+            'X-Api-Key': apiKey
+        }
+    });
+
+    if (!response.ok) {
+        throw new Error('Failed to get upload token');
+    }
+
+    const { token, expiresIn } = await response.json();
+    return {
+        token,
+        expiresIn,
+        expiryTime: Date.now() + (expiresIn * 1000)
+    };
+}
+
+export class FileUploader {
     constructor(config) {
         this.config = config;
-        this.baseUrl = config.baseUrl.replace(/\/+$/, '');
+        this.baseUrl = config.baseUrl;
         this.chunkSize = config.chunkSize || 1024 * 1024;
-        this.apiKey = config.apiKey;
+        this.token = config.token;
+        this.tokenExpiry = config.tokenExpiry;
         this.maxParallelUploads = config.maxParallelUploads || 3;
         this.compressionMode = config.compressionMode || 'auto';
-        this.useCompression = null; // Will be determined by mode
-        this.compressionThreshold = 0.75; // 25% improvement needed
+        this.useCompression = null;
+        this.compressionThreshold = 0.75;
+    }
+
+    async _sendRequest(path, options = {}) {
+        if (!this.token || (this.tokenExpiry && Date.now() >= this.tokenExpiry)) {
+            throw new Error('Invalid or expired token');
+        }
+
+        const url = `${this.baseUrl}${path}`;
+        const headers = {
+            'Authorization': `Bearer ${this.token}`,
+            ...options.headers
+        };
+
+        if (!(options.body instanceof FormData)) {
+            headers['Content-Type'] = 'application/json';
+        }
+
+        const response = await fetch(url, {
+            ...options,
+            headers
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+            throw new Error(error.error || `HTTP error! status: ${response.status}`);
+        }
+
+        return response.json();
     }
 
     // Helper function to compress data
@@ -248,30 +298,4 @@ class FileUploader {
             throw error;
         }
     }
-
-    async _sendRequest(path, options = {}) {
-        const url = `${this.baseUrl}${path}`;
-        const headers = {
-            'X-Api-Key': this.apiKey,
-            ...options.headers
-        };
-
-        if (!(options.body instanceof FormData)) {
-            headers['Content-Type'] = 'application/json';
-        }
-
-        const response = await fetch(url, {
-            ...options,
-            headers
-        });
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-            throw new Error(error.error || `HTTP error! status: ${response.status}`);
-        }
-
-        return response.json();
-    }
 }
-
-export { FileUploader };

@@ -4,6 +4,7 @@ import multer from 'multer';
 import config from '../../config/config.js';
 import { createGunzip, createInflate } from 'zlib';
 import { Readable } from 'stream';
+import validateToken from '../middleware/jwt-auth.js';
 
 const router = express.Router();
 
@@ -40,6 +41,9 @@ const validateS3Config = (req, res, next) => {
     }
     next();
 };
+
+// Add JWT validation to all upload routes
+router.use(validateToken);
 
 // Add the validation middleware to all routes
 router.post('/upload_chunk', validateS3Config, upload.single('chunk'), async (req, res) => {
