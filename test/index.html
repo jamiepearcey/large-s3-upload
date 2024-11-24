@@ -49,9 +49,64 @@
         .error {
             color: #ff0000;
         }
+        .file-list {
+            margin-top: 20px;
+        }
+        .file-item {
+            padding: 15px;
+            margin: 10px 0;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+            border-left: 4px solid #ccc;
+        }
+        .file-item.complete {
+            border-left-color: #4CAF50;
+        }
+        .file-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .file-name {
+            font-weight: bold;
+        }
+        .file-size {
+            color: #666;
+        }
+        .file-progress {
+            font-size: 0.9em;
+            color: #666;
+            margin: 5px 0;
+        }
+        .file-stats {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #fff;
+            border-radius: 4px;
+            font-size: 0.9em;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 8px;
+        }
+        .file-stats div {
+            color: #444;
+        }
+        .file-stats-container {
+            display: none;
+        }
+        .batch-progress {
+            margin: 15px 0;
+            padding: 10px;
+            background-color: #e8f5e9;
+            border-radius: 5px;
+            font-weight: bold;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
+    <h1>Huge File Upload API Test Harness</h1>
     <div class="token-section">
         <h3>Authentication</h3>
         <div>
@@ -80,16 +135,24 @@
                 <option value="disabled">Disabled</option>
             </select>
         </div>
+        <div>
+            <label for="maxBatchSize">Max Concurrent Files:</label>
+            <input type="number" id="maxBatchSize" value="3" min="1" max="10">
+        </div>
     </div>
 
     <div class="upload-section">
         <h3>File Upload</h3>
-        <input type="file" id="fileInput" disabled>
-        <button onclick="uploadFile()" disabled id="uploadButton">Upload</button>
+        <input type="file" id="fileInput" disabled multiple>
+        <button onclick="uploadFiles()" disabled id="uploadButton">Upload</button>
+        <div class="batch-progress">
+            Files: <span id="batchProgress">0 / 0</span>
+        </div>
         <div class="progress">
             <div class="progress-bar" id="progressBar"></div>
         </div>
         <div class="status" id="status"></div>
+        <div class="file-list" id="fileList"></div>
     </div>
 
     <script type="module">
@@ -133,27 +196,70 @@
             status.textContent = message;
         }
 
-        window.uploadFile = async function() {
-            const baseUrl = document.getElementById('baseUrl').value
+        function formatFileStats(stats) {
+            return `
+                <div class="file-stats">
+                    <div>Upload Time: ${stats.totalTimeSeconds}s</div>
+                    <div>Speed: ${stats.uploadSpeedMBps} MB/s</div>
+                    <div>Original Size: ${stats.originalSizeMB} MB</div>
+                    ${stats.compressionRatio !== 'compression disabled' ? `
+                        <div>Compressed Size: ${stats.compressedSizeMB} MB</div>
+                        <div>Compression Ratio: ${stats.compressionRatio}</div>
+                    ` : '<div>Compression: Disabled</div>'}
+                    <div>Chunks: ${stats.totalChunks} (${stats.chunkSizeMB} MB each)</div>
+                </div>
+            `;
+        }
 
+        function updateFileList(files) {
+            const fileList = document.getElementById('fileList');
+            fileList.innerHTML = Array.from(files).map(file => `
+                <div class="file-item" id="file-${file.name}">
+                    <div class="file-header">
+                        <div class="file-name">${file.name}</div>
+                        <div class="file-size">${(file.size / (1024 * 1024)).toFixed(2)} MB</div>
+                    </div>
+                    <div class="file-progress">Pending...</div>
+                    <div class="file-stats-container" style="display: none;"></div>
+                </div>
+            `).join('');
+        }
+
+        function updateFileStatus(fileName, status, stats = null) {
+            const fileItem = document.getElementById(`file-${fileName}`);
+            if (fileItem) {
+                const progressDiv = fileItem.querySelector('.file-progress');
+                const statsContainer = fileItem.querySelector('.file-stats-container');
+                
+                progressDiv.textContent = status;
+                
+                if (stats) {
+                    statsContainer.style.display = 'block';
+                    statsContainer.innerHTML = formatFileStats(stats);
+                    fileItem.classList.add('complete');
+                }
+            }
+        }
+
+        window.uploadFiles = async function() {
             if (!tokenInfo) {
                 updateStatus('Please get an upload token first');
                 return;
             }
 
             const fileInput = document.getElementById('fileInput');
+            const files = fileInput.files;
             
-            if (!fileInput.files.length) {
-                updateStatus('Please select a file first.');
+            if (!files.length) {
+                updateStatus('Please select files first.');
                 return;
             }
 
-            const file = fileInput.files[0];
+            updateFileList(files);
             
             try {
-                updateStatus('Starting upload...');
-                updateProgress(0);
-
+                const baseUrl = document.getElementById('baseUrl').value;
+                const maxBatchSize = parseInt(document.getElementById('maxBatchSize').value);
 
                 const uploader = new FileUploader({
                     baseUrl,
@@ -164,44 +270,51 @@
                     compressionMode: document.getElementById('compressionMode').value
                 });
 
-
-                const result = await uploader.uploadFile(file, {
-                    onProgress: (uploadedBytes, totalBytes) => {
+                const result = await uploader.uploadFiles(Array.from(files), maxBatchSize, {
+                    onFileProgress: (file, uploadedBytes, totalBytes) => {
                         const percent = Math.round((uploadedBytes / totalBytes) * 100);
-                        updateProgress(percent);
-                        updateStatus(`Uploading: ${percent}%`);
-                    },
-                    onChunkComplete: (chunkNumber, totalChunks) => {
-                        updateStatus(`Uploaded chunk ${chunkNumber} of ${totalChunks}`);
+                        updateFileStatus(file.name, `Uploading: ${percent}%`);
                     },
                     onFileComplete: (fileInfo) => {
-                        console.log('File upload completed:', fileInfo);
-                        updateStatus(`Upload complete! 
-                            File: ${fileInfo.originalName}
-                            Size: ${fileInfo.stats.originalSizeMB} MB
-                            Type: ${fileInfo.mimeType}
-                            Upload Time: ${fileInfo.stats.totalTimeSeconds}s
-                            Speed: ${fileInfo.stats.uploadSpeedMBps} MB/s
-                            Compression: ${fileInfo.stats.compressionRatio}
+                        updateFileStatus(
+                            fileInfo.originalName, 
+                            'Complete ✓', 
+                            fileInfo.stats
+                        );
+                        console.log('File completed:', fileInfo);
+                    },
+                    onFileError: (file, error) => {
+                        updateFileStatus(file.name, `Failed: ${error.message}`);
+                    },
+                    onBatchProgress: (completed, failed, total) => {
+                        document.getElementById('batchProgress').textContent = 
+                            `${completed + failed} / ${total} (${failed} failed)`;
+                    },
+                    onBatchComplete: (results) => {
+                        console.log('Batch upload completed:', results);
+                        updateStatus(`Batch upload complete. 
+                            Total files: ${results.totalFiles}
+                            Completed: ${results.completedFiles}
+                            Failed: ${results.failedFiles}
+                            Time: ${results.totalTimeSeconds.toFixed(2)}s
                         `);
                     }
                 });
 
-                updateProgress(100);
             } catch (error) {
-                updateProgress(0);
-                updateStatus(`Upload failed: ${error.message}`);
-                console.error('Upload error:', error);
+                updateStatus(`Batch upload failed: ${error.message}`);
+                console.error('Batch upload error:', error);
             }
         };
 
-        // Event listener for file upload
+        // Update file input event listener
         document.getElementById("fileInput").addEventListener("change", (event) => {
-            const file = event.target.files[0];
-            if (file) {
-                uploadFile();
+            const files = event.target.files;
+            if (files.length) {
+                updateFileList(files);
             }
         });
+
         // Event listener for file upload
         document.getElementById("getTokenButton").addEventListener("click", (event) => {
             getToken();

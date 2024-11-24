@@ -28,7 +28,6 @@ export class FileUploader {
         this.tokenExpiry = config.tokenExpiry;
         this.maxParallelUploads = config.maxParallelUploads || 3;
         this.compressionMode = config.compressionMode || 'auto';
-        this.useCompression = null;
         this.compressionThreshold = 0.75;
     }
 
@@ -119,13 +118,13 @@ export class FileUploader {
         const fileExtension = file.name.split('.').pop();
 
         // Determine compression mode
-        this.useCompression = this.compressionMode === 'enabled';
+        let useCompression = this.compressionMode === 'enabled';
         
         // For auto mode, test first chunk
         if (this.compressionMode === 'auto') {
             const firstChunk = file.slice(0, Math.min(this.chunkSize, file.size));
-            this.useCompression = await this.evaluateCompression(firstChunk);
-            console.log(`Auto compression ${this.useCompression ? 'enabled' : 'disabled'} based on evaluation`);
+            useCompression = await this.evaluateCompression(firstChunk);
+            console.log(`Auto compression ${useCompression ? 'enabled' : 'disabled'} based on evaluation`);
         }
 
         // Initialize timing stats
@@ -138,7 +137,7 @@ export class FileUploader {
             totalCompressedSize: 0,
             originalSize: file.size,
             compressionMode: this.compressionMode,
-            compressionEnabled: this.useCompression
+            compressionEnabled: useCompression
         };
 
         try {
@@ -147,7 +146,7 @@ export class FileUploader {
                 body: JSON.stringify({ 
                     fileId, 
                     fileExtension,
-                    compressed: this.useCompression 
+                    compressed: useCompression 
                 })
             });
 
@@ -176,12 +175,12 @@ export class FileUploader {
                 const chunk = file.slice(start, end);
                 
                 // Compress the chunk if compression is enabled
-                const processedChunk = this.useCompression ? 
+                const processedChunk = useCompression ? 
                     await this.compressChunk(chunk) : 
                     chunk;
 
                 // Track compressed size for compression ratio calculation
-                if (this.useCompression) {
+                if (useCompression) {
                     stats.totalCompressedSize += processedChunk.size;
                 }
 
@@ -191,7 +190,7 @@ export class FileUploader {
                 formData.append('uploadId', uploadId);
                 formData.append('fileExtension', fileExtension);
                 formData.append('chunkNumber', chunkNumber);
-                formData.append('compressed', this.useCompression.toString());
+                formData.append('compressed', useCompression.toString());
                 formData.append('originalSize', chunk.size.toString());
 
                 try {
@@ -256,7 +255,7 @@ export class FileUploader {
             stats.totalTime = (stats.endTime - stats.startTime) / 1000; // Convert to seconds
             stats.uploadSpeed = (file.size / (1024 * 1024)) / stats.totalTime; // MB/s
 
-            if (this.useCompression) {
+            if (useCompression) {
                 stats.compressionRatio = stats.totalCompressedSize / file.size;
             }
 
@@ -275,14 +274,14 @@ export class FileUploader {
                         stats.compressionRatio.toFixed(2) : 
                         'compression disabled',
                     originalSizeMB: (file.size / (1024 * 1024)).toFixed(2),
-                    compressedSizeMB: this.useCompression ? 
+                    compressedSizeMB: useCompression ? 
                         (stats.totalCompressedSize / (1024 * 1024)).toFixed(2) : 
                         'compression disabled',
                     totalChunks,
                     chunkSizeMB: (this.chunkSize / (1024 * 1024)).toFixed(2),
                     parallelUploads: this.maxParallelUploads,
                     compressionMode: this.compressionMode,
-                    compressionEnabled: this.useCompression,
+                    compressionEnabled: useCompression,
                     compressionThreshold: this.compressionThreshold
                 }
             };
@@ -297,5 +296,94 @@ export class FileUploader {
             console.error('Upload error:', error);
             throw error;
         }
+    }
+
+    async uploadFiles(files, maxBatchSize = 3, callbacks = {}) {
+        const stats = {
+            startTime: Date.now(),
+            endTime: null,
+            totalFiles: files.length,
+            completedFiles: 0,
+            failedFiles: 0,
+            results: []
+        };
+
+        // Create batches of files
+        const batches = [];
+        for (let i = 0; i < files.length; i += maxBatchSize) {
+            batches.push(files.slice(i, i + maxBatchSize));
+        }
+
+        // Process each batch
+        for (const batch of batches) {
+            try {
+                // Upload files in current batch concurrently
+                const uploadPromises = batch.map(file => 
+                    this.uploadFile(file, {
+                        onProgress: (uploadedBytes, totalBytes) => {
+                            if (callbacks.onFileProgress) {
+                                callbacks.onFileProgress(file, uploadedBytes, totalBytes);
+                            }
+                        },
+                        onChunkComplete: (chunkNumber, totalChunks) => {
+                            if (callbacks.onFileChunkComplete) {
+                                callbacks.onFileChunkComplete(file, chunkNumber, totalChunks);
+                            }
+                        },
+                        onFileComplete: (fileInfo) => {
+                            stats.completedFiles++;
+                            stats.results.push({
+                                file: file.name,
+                                success: true,
+                                result: fileInfo
+                            });
+                            if (callbacks.onFileComplete) {
+                                callbacks.onFileComplete(fileInfo);
+                            }
+                            if (callbacks.onBatchProgress) {
+                                callbacks.onBatchProgress(stats.completedFiles, stats.failedFiles, stats.totalFiles);
+                            }
+                        }
+                    }).catch(error => {
+                        stats.failedFiles++;
+                        stats.results.push({
+                            file: file.name,
+                            success: false,
+                            error: error.message
+                        });
+                        if (callbacks.onFileError) {
+                            callbacks.onFileError(file, error);
+                        }
+                        if (callbacks.onBatchProgress) {
+                            callbacks.onBatchProgress(stats.completedFiles, stats.failedFiles, stats.totalFiles);
+                        }
+                    })
+                );
+
+                // Wait for current batch to complete
+                await Promise.all(uploadPromises);
+
+            } catch (error) {
+                console.error('Batch upload error:', error);
+            }
+        }
+
+        // Calculate final statistics
+        stats.endTime = Date.now();
+        stats.totalTime = (stats.endTime - stats.startTime) / 1000;
+
+        const batchResults = {
+            totalFiles: stats.totalFiles,
+            completedFiles: stats.completedFiles,
+            failedFiles: stats.failedFiles,
+            totalTimeSeconds: stats.totalTime,
+            results: stats.results
+        };
+
+        if (callbacks.onBatchComplete) {
+            callbacks.onBatchComplete(batchResults);
+        }
+
+        return batchResults;
     }
 }
