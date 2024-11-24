@@ -44,6 +44,9 @@ app.use(express.urlencoded({ extended: true }));
 // Add auth routes BEFORE upload routes
 app.use('/api/auth', authRoutes);
 app.use('/api', uploadRoutes);
+app.use('/health', (req, res) => {
+    res.status(200).send('OK');
+});
 
 app.listen(config.PORT, () => {
     console.log(`Server running on port ${config.PORT}`);
