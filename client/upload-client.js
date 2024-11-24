@@ -2,10 +2,12 @@ class FileUploader {
     constructor(config) {
         this.config = config;
         this.baseUrl = config.baseUrl.replace(/\/+$/, '');
-        this.chunkSize = config.chunkSize || 1024 * 1024; // Default 1MB
+        this.chunkSize = config.chunkSize || 1024 * 1024;
         this.apiKey = config.apiKey;
-        this.maxParallelUploads = config.maxParallelUploads || 3; // Default parallel uploads
-        this.useCompression = config.useCompression !== false; // Enable by default
+        this.maxParallelUploads = config.maxParallelUploads || 3;
+        this.compressionMode = config.compressionMode || 'auto';
+        this.useCompression = null; // Will be determined by mode
+        this.compressionThreshold = 0.75; // 25% improvement needed
     }
 
     // Helper function to compress data
@@ -41,11 +43,40 @@ class FileUploader {
         // Return as Blob for FormData
         return new Blob([concatenated]);
     }
+    async evaluateCompression(chunk) {
+        try {
+            const originalSize = chunk.size;
+            const compressedBlob = await this.compressChunk(chunk);
+            const compressionRatio = compressedBlob.size / originalSize;
+            
+            console.log('Compression evaluation:', {
+                originalSize,
+                compressedSize: compressedBlob.size,
+                ratio: compressionRatio.toFixed(2)
+            });
+
+            // Return true if compression saves at least 25%
+            return compressionRatio <= this.compressionThreshold;
+        } catch (error) {
+            console.error('Compression evaluation failed:', error);
+            return false;
+        }
+    }
 
     async uploadFile(file, callbacks = {}) {
         const fileId = crypto.randomUUID();
         const totalChunks = Math.ceil(file.size / this.chunkSize);
         const fileExtension = file.name.split('.').pop();
+
+        // Determine compression mode
+        this.useCompression = this.compressionMode === 'enabled';
+        
+        // For auto mode, test first chunk
+        if (this.compressionMode === 'auto') {
+            const firstChunk = file.slice(0, Math.min(this.chunkSize, file.size));
+            this.useCompression = await this.evaluateCompression(firstChunk);
+            console.log(`Auto compression ${this.useCompression ? 'enabled' : 'disabled'} based on evaluation`);
+        }
 
         // Initialize timing stats
         const stats = {
@@ -55,7 +86,9 @@ class FileUploader {
             uploadSpeed: null,
             compressionRatio: null,
             totalCompressedSize: 0,
-            originalSize: file.size
+            originalSize: file.size,
+            compressionMode: this.compressionMode,
+            compressionEnabled: this.useCompression
         };
 
         try {
@@ -197,7 +230,10 @@ class FileUploader {
                         'compression disabled',
                     totalChunks,
                     chunkSizeMB: (this.chunkSize / (1024 * 1024)).toFixed(2),
-                    parallelUploads: this.maxParallelUploads
+                    parallelUploads: this.maxParallelUploads,
+                    compressionMode: this.compressionMode,
+                    compressionEnabled: this.useCompression,
+                    compressionThreshold: this.compressionThreshold
                 }
             };
 

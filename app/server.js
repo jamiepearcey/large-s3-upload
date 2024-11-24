@@ -1,7 +1,9 @@
 import express from 'express';
 import cors from 'cors';
+import { fileURLToPath } from 'url';
+import path from 'path';
+import uploadRoutes from './routes/upload.js';
 import config from '../config/config.js';
-import uploadRouter from './routes/upload.js';
 
 const app = express();
 
@@ -23,12 +25,24 @@ if (config.DISABLE_CORS) {
     console.log('CORS enabled with configured origins');
 }
 
-app.use('/api', uploadRouter);
+// Add these lines to define __dirname when using ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const port = config.PORT;
-app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
-    console.log('Environment:', process.env.NODE_ENV || 'development');
+// Move this line BEFORE any authentication middleware
+app.use('/client', express.static(path.join(__dirname, '../client')));
+
+// Serve test files in development
+if (process.env.NODE_ENV !== 'production') {
+    app.use('/test', express.static(path.join(__dirname, '../test')));
+}
+
+// Add these before your routes
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+app.use('/api', uploadRoutes);
+
+app.listen(config.PORT, () => {
+    console.log(`Server running on port ${config.PORT}`);
 });
-
-export default app;

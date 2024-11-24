@@ -54,8 +54,12 @@
             <input type="number" id="chunkSize" value="6048576">
         </div>
         <div>
-            <label for="useCompression">Use Compression:</label>
-            <input type="checkbox" id="useCompression" checked>
+            <label for="compressionMode">Compression Mode:</label>
+            <select id="compressionMode">
+                <option value="auto">Auto (Smart)</option>
+                <option value="enabled">Always Enable</option>
+                <option value="disabled">Disabled</option>
+            </select>
         </div>
     </div>
 
@@ -97,7 +101,7 @@
                 baseUrl: document.getElementById('baseUrl').value.replace(/\/+$/, ''),
                 chunkSize: parseInt(document.getElementById('chunkSize').value),
                 maxParallelUploads: 5,
-                useCompression: document.getElementById('useCompression').checked
+                compressionMode: document.getElementById('compressionMode').value
             };
 
             const uploader = new FileUploader(config);
