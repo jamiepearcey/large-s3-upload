@@ -1,67 +1,100 @@
 class FileUploader {
     constructor(config) {
         this.config = config;
-        this.baseUrl = config.baseUrl.replace(/\/+$/, ''); // Remove trailing slashes
+        this.baseUrl = config.baseUrl.replace(/\/+$/, '');
         this.chunkSize = config.chunkSize || 1024 * 1024; // Default 1MB
         this.apiKey = config.apiKey;
+        this.maxParallelUploads = config.maxParallelUploads || 3; // Default parallel uploads
     }
 
     async uploadFile(file, callbacks = {}) {
         const fileId = crypto.randomUUID();
         const totalChunks = Math.ceil(file.size / this.chunkSize);
-        const fileExtension = file.name.split('.').pop(); // Get file extension
+        const fileExtension = file.name.split('.').pop();
 
         try {
-            // Start multipart upload with file extension
             const startResponse = await this._sendRequest('/start_upload', {
                 method: 'POST',
-                body: JSON.stringify({ 
-                    fileId,
-                    fileExtension  // Add file extension to the request
-                })
+                body: JSON.stringify({ fileId, fileExtension })
             });
 
-            const { uploadId } = startResponse;  // Using camelCase
-            const parts = [];
+            const { uploadId } = startResponse;
+            const parts = new Array(totalChunks);
             let uploadedBytes = 0;
 
-            // Upload chunks
+            // Create array of chunk upload tasks
+            const chunkTasks = [];
             for (let chunkNumber = 1; chunkNumber <= totalChunks; chunkNumber++) {
                 const start = (chunkNumber - 1) * this.chunkSize;
                 const end = Math.min(start + this.chunkSize, file.size);
-                const chunk = file.slice(start, end);
-                const extension = file.name.split('.').pop();
+                
+                chunkTasks.push({
+                    chunkNumber,
+                    start,
+                    end,
+                    retries: 0,
+                    maxRetries: 3
+                });
+            }
 
-                // Create FormData with camelCase keys
+            // Process chunks with limited concurrency
+            const processChunk = async (task) => {
+                const { chunkNumber, start, end } = task;
+                const chunk = file.slice(start, end);
+
                 const formData = new FormData();
                 formData.append('chunk', chunk);
                 formData.append('fileId', fileId);
                 formData.append('uploadId', uploadId);
-                formData.append('fileExtension', extension);
+                formData.append('fileExtension', fileExtension);
                 formData.append('chunkNumber', chunkNumber);
 
-                const response = await this._sendRequest('/upload_chunk', {
-                    method: 'POST',
-                    body: formData
-                });
+                try {
+                    const response = await this._sendRequest('/upload_chunk', {
+                        method: 'POST',
+                        body: formData
+                    });
 
-                parts.push({
-                    partNumber: response.partNumber,  // Using camelCase
-                    eTag: response.eTag              // Using camelCase
-                });
+                    parts[chunkNumber - 1] = {
+                        partNumber: response.partNumber,
+                        eTag: response.eTag
+                    };
 
-                uploadedBytes += chunk.size;
+                    uploadedBytes += chunk.size;
 
-                // Call progress callbacks
-                if (callbacks.onProgress) {
-                    callbacks.onProgress(uploadedBytes, file.size);
+                    if (callbacks.onProgress) {
+                        callbacks.onProgress(uploadedBytes, file.size);
+                    }
+                    if (callbacks.onChunkComplete) {
+                        callbacks.onChunkComplete(chunkNumber, totalChunks);
+                    }
+                } catch (error) {
+                    if (task.retries < task.maxRetries) {
+                        task.retries++;
+                        console.log(`Retrying chunk ${chunkNumber}, attempt ${task.retries}`);
+                        return processChunk(task);
+                    }
+                    throw error;
                 }
-                if (callbacks.onChunkComplete) {
-                    callbacks.onChunkComplete(chunkNumber, totalChunks);
+            };
+
+            // Process chunks in parallel with limited concurrency
+            const processBatch = async (tasks) => {
+                while (tasks.length > 0) {
+                    const batch = tasks.splice(0, this.maxParallelUploads);
+                    await Promise.all(batch.map(task => processChunk(task)));
                 }
+            };
+
+            // Start processing chunks
+            await processBatch(chunkTasks);
+
+            // Verify all parts are present
+            if (parts.some(part => !part)) {
+                throw new Error('Some chunks failed to upload');
             }
 
-            // Complete multipart upload with file extension
+            // Complete multipart upload
             const completeResponse = await this._sendRequest('/complete_upload', {
                 method: 'POST',
                 body: JSON.stringify({
@@ -69,7 +102,7 @@ class FileUploader {
                     uploadId,
                     parts,
                     filename: file.name,
-                    fileExtension  // Add file extension to complete request
+                    fileExtension
                 })
             });
 
@@ -83,7 +116,6 @@ class FileUploader {
                 mimeType: file.type
             };
 
-            // Call onFileComplete callback with the complete file information
             if (callbacks.onFileComplete) {
                 callbacks.onFileComplete(result);
             }
@@ -103,7 +135,6 @@ class FileUploader {
             ...options.headers
         };
 
-        // Add Content-Type header for JSON requests
         if (!(options.body instanceof FormData)) {
             headers['Content-Type'] = 'application/json';
         }
