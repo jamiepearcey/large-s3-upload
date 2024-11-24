@@ -115,6 +115,14 @@
         </div>
         <button id="getTokenButton">Get Upload Token</button>
         <div class="token-status" id="tokenStatus"></div>
+        <div>
+            <label for="token">Token:</label>
+            <input type="text" id="token" value="" disabled style="width: 300px;">
+        </div>
+        <div>
+            <label for="tokenExpiry">Token Expiry (seconds):</label>
+            <input type="number" id="tokenExpiry" disabled value="3600" min="1">
+        </div>
     </div>
 
     <div class="config-section">
@@ -138,6 +146,10 @@
         <div>
             <label for="maxBatchSize">Max Concurrent Files:</label>
             <input type="number" id="maxBatchSize" value="3" min="1" max="10">
+        </div>
+        <div>
+            <label for="maxParallelUploads">Max Parallel Chunks Per File:</label>
+            <input type="number" id="maxParallelUploads" value="3" min="1" max="10">
         </div>
     </div>
 
@@ -166,6 +178,8 @@
             const tokenStatus = document.getElementById('tokenStatus');
             const fileInput = document.getElementById('fileInput');
             const uploadButton = document.getElementById('uploadButton');
+            const tokenInput = document.getElementById('token');
+            const tokenExpiryInput = document.getElementById('tokenExpiry');
 
             try {
                 tokenStatus.textContent = 'Retrieving token...';
@@ -176,7 +190,8 @@
                 tokenStatus.textContent = 'Token retrieved successfully!';
                 fileInput.disabled = false;
                 uploadButton.disabled = false;
-
+                tokenInput.value = tokenInfo.token;
+                tokenExpiryInput.value = tokenInfo.expiryTime;
             } catch (error) {
                 console.error('Token error:', error);
                 tokenStatus.textContent = `Failed to get token: ${error.message}`;
@@ -260,13 +275,14 @@
             try {
                 const baseUrl = document.getElementById('baseUrl').value;
                 const maxBatchSize = parseInt(document.getElementById('maxBatchSize').value);
+                const maxParallelUploads = parseInt(document.getElementById('maxParallelUploads').value);
 
                 const uploader = new FileUploader({
                     baseUrl,
                     token: tokenInfo.token,
                     tokenExpiry: tokenInfo.expiryTime,
                     chunkSize: parseInt(document.getElementById('chunkSize').value),
-                    maxParallelUploads: 5,
+                    maxParallelUploads: maxParallelUploads,
                     compressionMode: document.getElementById('compressionMode').value
                 });
 
