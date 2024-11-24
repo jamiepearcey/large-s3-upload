@@ -13,7 +13,7 @@ class FileUploader {
         // Convert Blob to ArrayBuffer first
         const arrayBuffer = await chunk.arrayBuffer();
         
-        const compressedStream = new CompressionStream('gzip');
+        const compressedStream = new CompressionStream('deflate');
         const writer = compressedStream.writable.getWriter();
         
         // Write the ArrayBuffer

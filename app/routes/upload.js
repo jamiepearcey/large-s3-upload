@@ -2,7 +2,7 @@ import { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMult
 import express from 'express';
 import multer from 'multer';
 import config from '../../config/config.js';
-import { createGunzip } from 'zlib';
+import { createGunzip, createInflate } from 'zlib';
 import { Readable } from 'stream';
 
 const router = express.Router();
@@ -75,13 +75,13 @@ router.post('/upload_chunk', validateS3Config, upload.single('chunk'), async (re
         // Decompress if the chunk was compressed
         if (isCompressed) {
             try {
-                const gunzip = createGunzip();
+                const decompressor = createInflate();
                 const chunks = [];
                 
                 const readable = Readable.from(file.buffer);
-                readable.pipe(gunzip);
+                readable.pipe(decompressor);
 
-                for await (const chunk of gunzip) {
+                for await (const chunk of decompressor) {
                     chunks.push(chunk);
                 }
 
